@@ -98,7 +98,7 @@ async fn create_task(app_state: web::Data<AppState>, task: web::Json<Task>) -> i
 }
 
 async fn read_task(app_state: web::Data<AppState>, id: web::Path<u64>) -> impl Responder {
-    let mut db: std::sync::MutexGuard<Database> = app_state.db.lock().unwrap();
+    let db: std::sync::MutexGuard<Database> = app_state.db.lock().unwrap();
     match db.get(&id.into_inner()) {
         Some(task) => HttpResponse::Ok().json(task),
         None => HttpResponse::NotFound().finish()
@@ -106,7 +106,7 @@ async fn read_task(app_state: web::Data<AppState>, id: web::Path<u64>) -> impl R
 }
 
 async fn read_all_tasks(app_state: web::Data<AppState>) -> impl Responder {
-    let mut db: std::sync::MutexGuard<Database> = app_state.db.lock().unwrap();
+    let db: std::sync::MutexGuard<Database> = app_state.db.lock().unwrap();
     let tasks = db.get_all();
     HttpResponse::Ok().json(tasks)
 }
@@ -133,7 +133,7 @@ async fn register(app_state: web::Data<AppState>, user: web::Json<User>) -> impl
 }
 
 async fn login(app_state: web::Data<AppState>, user: web::Json<User>) -> impl Responder {
-    let mut db: std::sync::MutexGuard<Database> = app_state.db.lock().unwrap();
+    let db: std::sync::MutexGuard<Database> = app_state.db.lock().unwrap();
     match db.get_user_by_name(&user.username) {
         Some(stored_user) if stored_user.password == user.password => {
             HttpResponse::Ok().body("Logged in!")
