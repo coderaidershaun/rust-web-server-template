@@ -1,73 +1,44 @@
 use actix_cors::Cors;
-
-use actix_web::{ http::header, web, App, HttpServer, Responder, HttpResponse };
-
-use serde::{ Deserialize, Serialize };
-
+use actix_web::{http::header, web, App, HttpServer, Responder, HttpResponse};
+use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct Task {
+struct GameState {
     id: u64,
-    name: String,
-    completed: bool
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct User {
-    id: u64,
-    username: String,
-    password: String
+    word: String,
+    guessed_letters: Vec<char>,
+    incorrect_attempts: u8,
+    last_move: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Database {
-    tasks: HashMap<u64, Task>,
-    users: HashMap<u64, User>
+    games: HashMap<u64, GameState>,
 }
 
 impl Database {
     fn new() -> Self {
         Self {
-            tasks: HashMap::new(),
-            users: HashMap::new()
+            games: HashMap::new(),
         }
     }
 
-    // CRUD DATA
-    fn insert(&mut self, task: Task) {
-        self.tasks.insert(task.id, task);
+    fn insert(&mut self, game: GameState) {
+        self.games.insert(game.id, game);
     }
 
-    fn get(&self, id: &u64) -> Option<&Task> {
-        self.tasks.get(id)
+    fn get(&self, id: &u64) -> Option<&GameState> {
+        self.games.get(id)
     }
 
-    fn get_all(&self) -> Vec<&Task> {
-        self.tasks.values().collect()
+    fn update(&mut self, game: GameState) {
+        self.games.insert(game.id, game);
     }
 
-    fn delete(&mut self, id: &u64) {
-        self.tasks.remove(id);
-    }
-
-    fn update(&mut self, task: Task) {
-        self.tasks.insert(task.id, task);
-    }
-
-    // USER DATA RELATED FUNCTIONS
-    fn insert_user(&mut self, user: User) {
-        self.users.insert(user.id, user);
-    }
-
-    fn get_user_by_name(&self, username: &str) -> Option<&User> {
-        self.users.values().find(|u| u.username == username)
-    }
-
-    // DATABASE SAVING
     fn save_to_file(&self) -> std::io::Result<()> {
         let data: String = serde_json::to_string(&self)?;
         let mut file: fs::File = fs::File::create("database.json")?;
@@ -83,71 +54,52 @@ impl Database {
 }
 
 struct AppState {
-    db: Mutex<Database>
+    db: Mutex<Database>,
 }
 
-async fn create_task(app_state: web::Data<AppState>, task: web::Json<Task>) -> impl Responder {
+async fn start_game(app_state: web::Data<AppState>, word: web::Json<String>) -> impl Responder {
     let mut db: std::sync::MutexGuard<Database> = app_state.db.lock().unwrap();
-    db.insert(task.into_inner());
+    let game = GameState {
+        id: rand::random(),
+        word: word.into_inner(),
+        guessed_letters: Vec::new(),
+        incorrect_attempts: 0,
+        last_move: String::new(),
+    };
+    db.insert(game.clone());
     let _ = db.save_to_file();
-    HttpResponse::Ok().finish()
+    HttpResponse::Ok().json(game)
 }
 
-async fn read_task(app_state: web::Data<AppState>, id: web::Path<u64>) -> impl Responder {
-    let db: std::sync::MutexGuard<Database> = app_state.db.lock().unwrap();
-    match db.get(&id.into_inner()) {
-        Some(task) => HttpResponse::Ok().json(task),
-        None => HttpResponse::NotFound().finish()
+async fn make_move(app_state: web::Data<AppState>, id: web::Path<u64>, letter: web::Json<char>) -> impl Responder {
+    let mut db: std::sync::MutexGuard<Database> = app_state.db.lock().unwrap();
+    let mut game = match db.get(&id.into_inner()).cloned() {
+        Some(game) => game,
+        None => return HttpResponse::NotFound().finish(),
+    };
+
+    let letter_inner = letter.into_inner();
+    game.last_move = format!("Guessed letter: {}", letter_inner);
+    game.guessed_letters.push(letter_inner);
+
+    if !game.word.contains(letter_inner) {
+        game.incorrect_attempts += 1;
     }
-}
 
-async fn read_all_tasks(app_state: web::Data<AppState>) -> impl Responder {
-    let db: std::sync::MutexGuard<Database> = app_state.db.lock().unwrap();
-    let tasks = db.get_all();
-    HttpResponse::Ok().json(tasks)
-}
-
-async fn update_task(app_state: web::Data<AppState>, task: web::Json<Task>) -> impl Responder {
-    let mut db: std::sync::MutexGuard<Database> = app_state.db.lock().unwrap();
-    db.update(task.into_inner());
+    db.update(game.clone());
     let _ = db.save_to_file();
-    HttpResponse::Ok().finish()
-}
-
-async fn delete_task(app_state: web::Data<AppState>, id: web::Path<u64>) -> impl Responder {
-    let mut db: std::sync::MutexGuard<Database> = app_state.db.lock().unwrap();
-    db.delete(&id.into_inner());
-    let _ = db.save_to_file();
-    HttpResponse::Ok().finish()
-}
-
-async fn register(app_state: web::Data<AppState>, user: web::Json<User>) -> impl Responder {
-    let mut db: std::sync::MutexGuard<Database> = app_state.db.lock().unwrap();
-    db.insert_user(user.into_inner());
-    let _ = db.save_to_file();
-    HttpResponse::Ok().finish()
-}
-
-async fn login(app_state: web::Data<AppState>, user: web::Json<User>) -> impl Responder {
-    let db: std::sync::MutexGuard<Database> = app_state.db.lock().unwrap();
-    match db.get_user_by_name(&user.username) {
-        Some(stored_user) if stored_user.password == user.password => {
-            HttpResponse::Ok().body("Logged in!")
-        },
-        _ => HttpResponse::BadRequest().body("Invalid username or password")
-    }
+    HttpResponse::Ok().json(game)
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-
     let db: Database = match Database::load_from_file() {
         Ok(db) => db,
-        Err(_) => Database::new()
+        Err(_) => Database::new(),
     };
 
     let data: web::Data<AppState> = web::Data::new(AppState {
-        db: Mutex::new(db)
+        db: Mutex::new(db),
     });
 
     HttpServer::new(move || {
@@ -161,16 +113,11 @@ async fn main() -> std::io::Result<()> {
                     .allowed_headers(vec![header::AUTHORIZATION, header::ACCEPT])
                     .allowed_header(header::CONTENT_TYPE)
                     .supports_credentials()
-                    .max_age(3600)
+                    .max_age(3600),
             )
             .app_data(data.clone())
-            .route("/task", web::post().to(create_task))
-            .route("/task", web::get().to(read_all_tasks))
-            .route("/task", web::put().to(update_task))
-            .route("/task/{id}", web::get().to(read_task))
-            .route("/task/{id}", web::delete().to(delete_task))
-            .route("/register", web::post().to(register))
-            .route("/login", web::post().to(login))
+            .route("/start", web::post().to(start_game))
+            .route("/move/{id}", web::post().to(make_move))
     })
     .bind("127.0.0.1:8080")?
     .run()

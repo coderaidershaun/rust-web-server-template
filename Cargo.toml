@@ -14,3 +14,4 @@ serde_json = "1.0.96"
 tokio = { version = "1.28.0", features = ["full"] }
 async-trait = "0.1.68"
 actix-cors = "0.6.4"
+rand = "0.8.5"
